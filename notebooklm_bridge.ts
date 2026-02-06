@@ -39,7 +39,9 @@ async function runBridge() {
                     requestId: request.id,
                     requestTimestamp: request.timestamp,
                     answer: answer.text,
-                    sources: answer.sources
+                    sources: answer.sources,
+                    citations: answer.citations,
+                    suggestions: answer.suggestions
                 };
 
                 await fs.writeFile(RESPONSE_FILE, JSON.stringify(response));
@@ -61,26 +63,36 @@ async function queryNotebookLM(page: Page, query: string) {
     await page.press(inputSelector, 'Enter');
 
     // 2. Wait for the response to finish generating
-    // We look for the last message and wait for the "typing" or "loading" indicators to disappear
-    await page.waitForTimeout(3000); // Initial wait for generation to start
+    await page.waitForTimeout(3000); // Initial wait
     
-    // This is a heuristic: wait until the 'stop' button or similar indicator is gone
-    // Or wait until the last message text stops changing.
-    await page.waitForSelector('.chat-message-response', { state: 'visible' });
+    // Wait for the 'stop' button to disappear or the response to finish
+    await page.waitForSelector('button[aria-label*="Stop"], .loading-indicator', { state: 'detached', timeout: 60000 }).catch(() => {});
 
-    // 3. Extract text and sources
+    // 3. Extract text, sources, citations and suggestions
     const result = await page.evaluate(() => {
-        const messages = document.querySelectorAll('.chat-message-response');
+        const messages = document.querySelectorAll('.chat-message-response, [data-testid="assistant-message"]');
         const lastMessage = messages[messages.length - 1];
         
         // Extract text
         const text = lastMessage?.textContent || 'No se pudo obtener respuesta';
         
-        // Extract sources (if they exist as chip/buttons)
-        const sourceElements = document.querySelectorAll('.source-chip'); 
+        // Extract sources
+        const sourceElements = document.querySelectorAll('.source-chip, [data-testid="source-chip"]'); 
         const sources = Array.from(sourceElements).map(el => el.textContent?.trim() || '');
 
-        return { text, sources };
+        // Extract Citations
+        const citationElements = lastMessage?.querySelectorAll('.citation, [data-citation-index]');
+        const citations = Array.from(citationElements).map((el: any) => ({
+            index: el.textContent,
+            snippet: el.getAttribute('data-snippet') || el.title || '',
+            sourceName: el.getAttribute('data-source-name') || ''
+        }));
+
+        // Extract Suggestions
+        const suggestionElements = document.querySelectorAll('.suggested-query-button, [data-testid="suggested-query"]');
+        const suggestions = Array.from(suggestionElements).map(el => el.textContent?.trim() || '').filter(t => t.length > 0);
+
+        return { text, sources, citations, suggestions };
     });
 
     return result;

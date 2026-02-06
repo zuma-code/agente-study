@@ -1,12 +1,10 @@
 "use server";
 
-import fs from 'fs/promises';
-import path from 'path';
-import { BridgeRequest, BridgeResponse } from './types';
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { BridgeResponse } from './types';
 
-const BRIDGE_DIR = path.join(process.cwd(), '.bridge');
-const REQUEST_FILE = path.join(BRIDGE_DIR, 'request.json');
-const RESPONSE_FILE = path.join(BRIDGE_DIR, 'response.json');
+// Initializing the Gemini API with your Key
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
 // Next.js 16 'use cache' for static syllabus data
 export async function getSyllabusStatus() {
@@ -14,59 +12,46 @@ export async function getSyllabusStatus() {
     return {
         bloque1: { name: "Común", count: "6/6" },
         bloque2: { name: "Gestión", count: "17/17" },
-        suggestion: "Pregúntame sobre las diferencias entre el Impuesto de Sociedades y el IRPF en retenciones."
+        suggestion: "Explícame los plazos de prescripción según el Art. 66 de la LGT."
     };
 }
 
 export async function queryNotebookLM(query: string) {
-    try {
-        await fs.mkdir(BRIDGE_DIR, { recursive: true });
-    } catch (e) { }
-
-    const timestamp = Date.now();
-    const requestId = Math.random().toString(36).substring(7);
-    
-    const requestData: BridgeRequest = { id: requestId, query, timestamp };
-    await fs.writeFile(REQUEST_FILE, JSON.stringify(requestData));
-    console.log(`[Bridge] Sent request ${requestId}: ${query.substring(0, 50)}...`);
-
-    const start = Date.now();
-    const timeout = 120000;
-    let delay = 500; // Start with 500ms
-
-    while (Date.now() - start < timeout) {
-        try {
-            const exists = await fs.stat(RESPONSE_FILE).then(() => true).catch(() => false);
-            if (exists) {
-                const content = await fs.readFile(RESPONSE_FILE, 'utf-8');
-                if (content && content.trim()) {
-                    let data: BridgeResponse;
-                    try {
-                        data = JSON.parse(content);
-                    } catch (parseError) {
-                        // File might be mid-write, wait a tiny bit and retry
-                        await new Promise(resolve => setTimeout(resolve, 200));
-                        continue;
-                    }
-
-                    if (data.requestId === requestId || data.requestTimestamp >= timestamp) {
-                        console.log(`[Bridge] Received valid response for ${requestId}`);
-                        await fs.unlink(RESPONSE_FILE).catch(() => {}); 
-                        return {
-                            content: data.answer,
-                            sources: data.sources || []
-                        };
-                    }
-                }
-            }
-        } catch (e) {
-            console.error("[Bridge] Polling error:", e);
-        }
-        
-        // Adaptive polling: poll faster at the beginning, then slow down
-        await new Promise(resolve => setTimeout(resolve, delay));
-        if (delay < 3000) delay += 500; 
+    if (!process.env.GEMINI_API_KEY) {
+        throw new Error("API Key no configurada. Por favor, añádela a tu archivo .env.local");
     }
 
-    throw new Error("NotebookLM response timeout (120s). Estaba analizando tus manuales pero tardé demasiado. Por favor, reintenta ahora que estoy preparado.");
+    try {
+        // Use gemini-2.0-flash for high speed and reasoning
+        const model = genAI.getGenerativeModel({ 
+            model: "gemini-2.0-flash",
+            systemInstruction: "Eres el Agente AEAT, un asistente experto en el temario de Agente de Hacienda Pública. Tu objetivo es ayudar al usuario a aprobar el examen de 2026. Responde siempre basándote en la normativa vigente (LGT, Reglamentos). Si no tienes acceso directo a un manual específico en este momento, utiliza tu conocimiento experto pero indica que es información general normativa. Mantén un tono profesional y estructurado con Markdown."
+        });
+
+        const chat = model.startChat({
+            history: [],
+            generationConfig: {
+                maxOutputTokens: 2048,
+            },
+        });
+
+        const result = await chat.sendMessage(query);
+        const response = await result.response;
+        const text = response.text();
+
+        // Simulate the structure we had before for UI compatibility
+        return {
+            content: text,
+            sources: ["Base de Datos Normativa AEAT"], // Later we will add real file sources
+            citations: [],
+            suggestions: [
+                "¿Qué dice el artículo siguiente?",
+                "Ponme un ejemplo práctico de esto",
+                "¿Cómo suele caer esto en el examen?"
+            ]
+        };
+    } catch (error) {
+        console.error("Gemini API Error:", error);
+        throw new Error("Error al conectar con el cerebro de Gemini. Revisa tu conexión o API Key.");
+    }
 }

@@ -51,7 +51,9 @@ const NotebookLMStudyHub = () => {
         {
           role: 'assistant',
           content: response.content,
-          sources: response.sources
+          sources: response.sources,
+          citations: response.citations,
+          suggestions: response.suggestions
         }
       ]);
     } catch (error) {
@@ -133,11 +135,42 @@ const NotebookLMStudyHub = () => {
                     }`}>
                     <div className="text-sm leading-relaxed prose prose-invert prose-p:leading-relaxed prose-pre:bg-slate-900">
                       {msg.role === 'assistant' ? (
-                        <ReactMarkdown>{msg.content}</ReactMarkdown>
+                        <ReactMarkdown
+                          components={{
+                            a: ({ ...props }) => {
+                              const citation = msg.citations?.find(c => c.index === props.children?.toString());
+                              return (
+                                <span 
+                                  className="inline-block bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded text-[10px] font-bold cursor-help mx-0.5 border border-blue-500/30 hover:bg-blue-500/40 transition-colors" 
+                                  title={citation?.snippet || citation?.sourceName}
+                                >
+                                  {props.children}
+                                </span>
+                              );
+                            }
+                          }}
+                        >
+                          {msg.content}
+                        </ReactMarkdown>
                       ) : (
                         <p>{msg.content}</p>
                       )}
                     </div>
+
+                    {/* Suggestions */}
+                    {msg.role === 'assistant' && msg.suggestions && msg.suggestions.length > 0 && (
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {msg.suggestions.map((suggestion, si) => (
+                          <button
+                            key={si}
+                            onClick={() => handleSend(suggestion)}
+                            className="text-[10px] bg-slate-900/80 hover:bg-slate-800 text-slate-300 border border-slate-700 px-3 py-1.5 rounded-full transition-all text-left"
+                          >
+                            {suggestion}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     {msg.content.includes('❌ **Error:**') && (
                       <button 
                         onClick={() => handleSend(lastQuery)}

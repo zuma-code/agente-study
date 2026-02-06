@@ -1,2 +1,3 @@
-2026/02/06-12:41:22.051 4b2df Creating DB /Users/usuario/Desktop/yunior-training/agente-study/study-app/.notebooklm_session/Default/shared_proto_db since it was missing.
-2026/02/06-12:41:22.058 4b2df Reusing MANIFEST /Users/usuario/Desktop/yunior-training/agente-study/study-app/.notebooklm_session/Default/shared_proto_db/MANIFEST-000001
+2026/02/06-20:15:46.202 80454 Reusing MANIFEST /Users/usuario/Desktop/yunior-training/agente-study/study-app/.notebooklm_session/Default/shared_proto_db/MANIFEST-000001
+2026/02/06-20:15:46.226 80454 Recovering log #3
+2026/02/06-20:15:46.227 80454 Reusing old log /Users/usuario/Desktop/yunior-training/agente-study/study-app/.notebooklm_session/Default/shared_proto_db/000003.log 

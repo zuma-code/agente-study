@@ -1,13 +1,15 @@
-export interface Message {
-    role: 'user' | 'assistant';
-    content: string;
-    sources?: string[];
+export interface Citation {
+    index: string;
+    snippet: string;
+    sourceName: string;
 }
 
-export interface BridgeRequest {
-    id: string;
-    query: string;
-    timestamp: number;
+export interface Message {
+    role: 'user' | 'assistant' | 'error';
+    content: string;
+    sources?: string[];
+    citations?: Citation[];
+    suggestions?: string[];
 }
 
 export interface BridgeResponse {
@@ -15,4 +17,6 @@ export interface BridgeResponse {
     requestTimestamp: number;
     answer: string;
     sources?: string[];
+    citations?: Citation[];
+    suggestions?: string[];
 }
