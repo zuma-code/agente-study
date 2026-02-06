@@ -1,57 +1,71 @@
 "use server";
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { BridgeResponse } from './types';
+import fs from "fs";
+import path from "path";
 
-// Initializing the Gemini API with your Key
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+// Cargar API KEY de .env.local
+const envLocal = fs.readFileSync(".env.local", "utf-8");
+const apiKeyMatch = envLocal.match(/GEMINI_API_KEY=(.*)/);
+const API_KEY = apiKeyMatch ? apiKeyMatch[1].trim() : process.env.GEMINI_API_KEY || "";
 
-// Next.js 16 'use cache' for static syllabus data
+const genAI = new GoogleGenerativeAI(API_KEY);
+
 export async function getSyllabusStatus() {
     "use cache";
     return {
-        bloque1: { name: "Común", count: "6/6" },
-        bloque2: { name: "Gestión", count: "17/17" },
-        suggestion: "Explícame los plazos de prescripción según el Art. 66 de la LGT."
+        bloque1: { name: "Común", count: "Constitución + LGT" },
+        bloque2: { name: "Gestión", count: "Reglamentos" },
+        suggestion: "¿Cuáles son los plazos de prescripción según el Art. 66 de la LGT?"
     };
 }
 
 export async function queryNotebookLM(query: string) {
-    if (!process.env.GEMINI_API_KEY) {
-        throw new Error("API Key no configurada. Por favor, añádela a tu archivo .env.local");
+    if (!API_KEY) {
+        throw new Error("API Key no configurada.");
     }
 
     try {
-        // Use gemini-2.0-flash for high speed and reasoning
+        const metadataPath = path.join(process.cwd(), "manuales_metadata.json");
+        let manuals = [];
+        if (fs.existsSync(metadataPath)) {
+            manuals = JSON.parse(fs.readFileSync(metadataPath, "utf-8"));
+        }
+
         const model = genAI.getGenerativeModel({ 
             model: "gemini-2.0-flash",
-            systemInstruction: "Eres el Agente AEAT, un asistente experto en el temario de Agente de Hacienda Pública. Tu objetivo es ayudar al usuario a aprobar el examen de 2026. Responde siempre basándote en la normativa vigente (LGT, Reglamentos). Si no tienes acceso directo a un manual específico en este momento, utiliza tu conocimiento experto pero indica que es información general normativa. Mantén un tono profesional y estructurado con Markdown."
+            systemInstruction: "Eres el Agente AEAT experto. Responde ÚNICAMENTE basándote en los documentos proporcionados. Si la información no está en los manuales, indícalo. Estructura con Markdown y usa un tono de preparador de oposiciones."
         });
+
+        // Configurar los archivos como parte del contenido inicial (Grounding)
+        const fileData = manuals.map((m: any) => ({
+            fileData: {
+                mimeType: "application/pdf",
+                fileUri: m.uri
+            }
+        }));
 
         const chat = model.startChat({
             history: [],
-            generationConfig: {
-                maxOutputTokens: 2048,
-            },
         });
 
-        const result = await chat.sendMessage(query);
+        // Enviamos los archivos y la consulta en el mismo mensaje para contexto total
+        const result = await chat.sendMessage([...fileData, query]);
         const response = await result.response;
         const text = response.text();
 
-        // Simulate the structure we had before for UI compatibility
         return {
             content: text,
-            sources: ["Base de Datos Normativa AEAT"], // Later we will add real file sources
-            citations: [],
+            sources: manuals.map((m: any) => m.displayName),
+            citations: [], // El modelo 2.0-flash maneja las citas dentro del texto
             suggestions: [
-                "¿Qué dice el artículo siguiente?",
                 "Ponme un ejemplo práctico de esto",
-                "¿Cómo suele caer esto en el examen?"
+                "¿Cómo suele preguntarse esto en el examen?",
+                "¿Qué plazos establece el Reglamento para esto?"
             ]
         };
     } catch (error) {
         console.error("Gemini API Error:", error);
-        throw new Error("Error al conectar con el cerebro de Gemini. Revisa tu conexión o API Key.");
+        throw new Error("Error en el motor de estudio. Revisa la consola.");
     }
 }
