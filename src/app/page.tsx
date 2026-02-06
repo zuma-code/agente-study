@@ -1,18 +1,26 @@
 "use client";
 
 import React, { useState, useOptimistic, startTransition, useRef, useEffect } from 'react';
-import { queryNotebookLM } from './actions';
+import { queryNotebookLM, getNotebooks, getActiveManuals } from './actions';
 import ReactMarkdown from 'react-markdown';
-import { Message } from './types';
+import { Message, Notebook } from './types';
 
 const NotebookLMStudyHub = () => {
+  const [notebooks, setNotebooks] = useState<Notebook[]>([]);
+  const [manuals, setManuals] = useState<any[]>([]);
+  const [selectedNotebook, setSelectedNotebook] = useState<string>("aeat-all");
   const [messages, setMessages] = useState<Message[]>([
-    { role: 'assistant', content: '¡Hola! He procesado los 23 temas del temario oficial. ¿Qué duda te gustaría resolver hoy? Puedo explicar conceptos, resumir temas o generar preguntas de autoevaluación.' }
+    { role: 'assistant', content: '¡Hola! Bienvenido a tu entorno de estudio personalizado. He cargado tus manuales. ¿En qué cuaderno quieres trabajar hoy?' }
   ]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [lastQuery, setLastQuery] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    getNotebooks().then(setNotebooks);
+    getActiveManuals().then(setManuals);
+  }, []);
 
   // Next.js 16/React 19 Optimistic UI
   const [optimisticMessages, addOptimisticMessage] = useOptimistic(
@@ -43,7 +51,7 @@ const NotebookLMStudyHub = () => {
     });
 
     try {
-      const response = await queryNotebookLM(query);
+      const response = await queryNotebookLM(query, selectedNotebook);
       // Update real state after server response
       setMessages(prev => [
         ...prev.filter(m => m.content !== 'Hubo un error al procesar tu solicitud.' && !m.content.includes('timeout')), 
@@ -96,16 +104,39 @@ const NotebookLMStudyHub = () => {
         {/* Sidebar: Syllabus Status */}
         <aside className="lg:col-span-1 space-y-6">
           <div className="bg-slate-900/30 border border-slate-800 p-6 rounded-2xl">
-            <h3 className="text-sm font-bold text-slate-400 mb-4 uppercase tracking-wider">Temas Ingeridos</h3>
+            <h3 className="text-sm font-bold text-slate-400 mb-4 uppercase tracking-wider">Tus Cuadernos</h3>
+            <div className="space-y-3">
+              {notebooks.map((nb) => (
+                <button
+                  key={nb.id}
+                  onClick={() => setSelectedNotebook(nb.id)}
+                  className={`w-full text-left p-3 rounded-xl border transition-all ${
+                    selectedNotebook === nb.id 
+                    ? 'bg-blue-600/20 border-blue-500/50 text-blue-100 shadow-lg shadow-blue-900/20' 
+                    : 'bg-slate-900/50 border-slate-800 text-slate-400 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="font-bold text-xs mb-1">{nb.name}</div>
+                  <div className="text-[10px] opacity-60 leading-tight">{nb.description}</div>
+                  <div className="text-[9px] mt-2 font-mono text-blue-400 uppercase tracking-tighter">
+                    {nb.fileCount} documentos indexados
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-slate-900/30 border border-slate-800 p-6 rounded-2xl">
+            <h3 className="text-sm font-bold text-slate-400 mb-4 uppercase tracking-wider">Documentos Activos</h3>
             <ul className="space-y-3">
-              <li className="flex items-center gap-3 text-sm">
-                <div className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-500 text-[10px]">✓</div>
-                Bloque 1: Común (6/6)
-              </li>
-              <li className="flex items-center gap-3 text-sm">
-                <div className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-500 text-[10px]">✓</div>
-                Bloque 2: Gestión (17/17)
-              </li>
+              {manuals.length > 0 ? manuals.map((m, i) => (
+                <li key={i} className="flex items-start gap-3 text-[10px] leading-tight text-slate-400">
+                  <div className="w-4 h-4 rounded bg-emerald-500/10 flex items-center justify-center text-emerald-500 mt-0.5">PDF</div>
+                  {m.displayName}
+                </li>
+              )) : (
+                <li className="text-xs text-slate-600 italic">No hay manuales cargados</li>
+              )}
             </ul>
           </div>
 

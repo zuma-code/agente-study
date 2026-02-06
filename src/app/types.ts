@@ -1,3 +1,10 @@
+export interface Notebook {
+    id: string;
+    name: string;
+    description: string;
+    fileCount: number;
+}
+
 export interface Citation {
     index: string;
     snippet: string;
@@ -10,6 +17,12 @@ export interface Message {
     sources?: string[];
     citations?: Citation[];
     suggestions?: string[];
+}
+
+export interface BridgeRequest {
+    id: string;
+    query: string;
+    timestamp: number;
 }
 
 export interface BridgeResponse {
