@@ -5,6 +5,41 @@ export interface Notebook {
     fileCount: number;
 }
 
+export interface Note {
+    id: string;
+    title: string;
+    content: string;
+    timestamp: number;
+}
+
+export interface Flashcard {
+    id: string;
+    front: string;
+    back: string;
+    mastered: boolean;
+}
+
+export interface QuizQuestion {
+    question: string;
+    options: string[];
+    correctAnswer: number;
+    explanation: string;
+}
+
+export interface Quiz {
+    title: string;
+    questions: QuizQuestion[];
+}
+
+export interface ExamResult {
+    id: string;
+    title: string;
+    themeId?: number;
+    score: number;
+    total: number;
+    timestamp: number;
+}
+
 export interface Citation {
     index: string;
     snippet: string;
