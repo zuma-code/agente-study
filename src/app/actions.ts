@@ -61,6 +61,122 @@ export async function syncManuals() {
     }
 }
 
+export async function getPendingDocuments() {
+    const MANUALS_DIR = path.join(process.cwd(), "manuales_aeat");
+    const METADATA_FILE = path.join(process.cwd(), "manuales_metadata.json");
+
+    try {
+        if (!fs.existsSync(MANUALS_DIR)) return [];
+        const files = fs.readdirSync(MANUALS_DIR).filter(f => f.endsWith(".pdf"));
+        
+        let indexedNames: string[] = [];
+        if (fs.existsSync(METADATA_FILE)) {
+            const metadata = JSON.parse(fs.readFileSync(METADATA_FILE, "utf-8"));
+            indexedNames = metadata.map((m: any) => m.displayName);
+        }
+
+        return files
+            .filter(f => !indexedNames.includes(f))
+            .map(f => ({
+                name: f,
+                size: fs.statSync(path.join(MANUALS_DIR, f)).size,
+                createdAt: fs.statSync(path.join(MANUALS_DIR, f)).birthtimeMs
+            }));
+    } catch (e) {
+        console.error("Error getting pending docs:", e);
+        return [];
+    }
+}
+
+export async function indexDocument(fileName: string) {
+    if (!API_KEY) throw new Error("API Key no configurada.");
+    
+    const fileManager = new GoogleAIFileManager(API_KEY);
+    const MANUALS_DIR = path.join(process.cwd(), "manuales_aeat");
+    const METADATA_FILE = path.join(process.cwd(), "manuales_metadata.json");
+    const filePath = path.join(MANUALS_DIR, fileName);
+
+    try {
+        console.log(`Subiendo ${fileName} a Gemini...`);
+        const uploadResult = await fileManager.uploadFile(filePath, {
+            mimeType: "application/pdf",
+            displayName: fileName,
+        });
+
+        let file = await fileManager.getFile(uploadResult.file.name);
+        while (file.state === FileState.PROCESSING) {
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            file = await fileManager.getFile(uploadResult.file.name);
+        }
+
+        if (file.state === FileState.FAILED) throw new Error("Fallo en el procesamiento de Gemini.");
+
+        let metadata = [];
+        if (fs.existsSync(METADATA_FILE)) {
+            metadata = JSON.parse(fs.readFileSync(METADATA_FILE, "utf-8"));
+        }
+
+        const newEntry = {
+            name: file.name,
+            displayName: file.displayName,
+            uri: file.uri
+        };
+
+        metadata.push(newEntry);
+        fs.writeFileSync(METADATA_FILE, JSON.stringify(metadata, null, 2));
+
+        return { success: true, entry: newEntry };
+    } catch (error: any) {
+        console.error("Indexing Error:", error);
+        throw new Error("Error al indexar documento: " + error.message);
+    }
+}
+
+export async function deleteDocument(fileName: string) {
+    const MANUALS_DIR = path.join(process.cwd(), "manuales_aeat");
+    const METADATA_FILE = path.join(process.cwd(), "manuales_metadata.json");
+    const filePath = path.join(MANUALS_DIR, fileName);
+
+    try {
+        // Delete file from disk
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
+
+        // Remove from metadata
+        if (fs.existsSync(METADATA_FILE)) {
+            let metadata = JSON.parse(fs.readFileSync(METADATA_FILE, "utf-8"));
+            metadata = metadata.filter((m: any) => m.displayName !== fileName);
+            fs.writeFileSync(METADATA_FILE, JSON.stringify(metadata, null, 2));
+        }
+
+        return { success: true };
+    } catch (e: any) {
+        throw new Error("Error al eliminar documento: " + e.message);
+    }
+}
+
+export async function getWhatsAppStatus() {
+    const AUTH_DIR = path.join(process.cwd(), "../bridge-node/.wwebjs_auth");
+    const QR_FILE = path.join(process.cwd(), "../bridge-node/whatsapp_qr.png");
+    
+    try {
+        const isAuth = fs.existsSync(AUTH_DIR) && fs.readdirSync(AUTH_DIR).length > 0;
+        let qrTimestamp = 0;
+        if (fs.existsSync(QR_FILE)) {
+            qrTimestamp = fs.statSync(QR_FILE).mtimeMs;
+        }
+        
+        return {
+            authenticated: isAuth,
+            qrTimestamp: qrTimestamp,
+            lastChecked: Date.now()
+        };
+    } catch (e) {
+        return { authenticated: false, qrTimestamp: 0, lastChecked: Date.now() };
+    }
+}
+
 export async function getNotebooks(): Promise<Notebook[]> {
     try {
         const metadataPath = path.join(process.cwd(), "manuales_metadata.json");
@@ -125,14 +241,14 @@ export async function queryNotebookLM(query: string, notebookId: string = "aeat-
     while (attempt <= maxRetries) {
         try {
             const metadataPath = path.join(process.cwd(), "manuales_metadata.json");
-            let allManuals = [];
+            let allManuals: any[] = [];
             if (fs.existsSync(metadataPath)) {
                 allManuals = JSON.parse(fs.readFileSync(metadataPath, "utf-8"));
             }
 
             let manuals = allManuals;
             if (selectedManualNames.length > 0) {
-                manuals = allManuals.filter(m => selectedManualNames.includes(m.displayName));
+                manuals = allManuals.filter((m: any) => selectedManualNames.includes(m.displayName));
             }
 
             const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
@@ -157,6 +273,7 @@ export async function queryNotebookLM(query: string, notebookId: string = "aeat-
             const text = response.text();
 
             return {
+                role: 'assistant' as const,
                 content: text,
                 sources: manuals.map((m: any) => m.displayName),
                 citations: [], 
@@ -183,10 +300,10 @@ export async function generateQuiz(notebookId: string = "aeat-all", selectedManu
 
     try {
         const metadataPath = path.join(process.cwd(), "manuales_metadata.json");
-        let allManuals = JSON.parse(fs.readFileSync(metadataPath, "utf-8"));
+        let allManuals: any[] = JSON.parse(fs.readFileSync(metadataPath, "utf-8"));
         let manuals = allManuals;
         if (selectedManualNames.length > 0) {
-            manuals = allManuals.filter(m => selectedManualNames.includes(m.displayName));
+            manuals = allManuals.filter((m: any) => selectedManualNames.includes(m.displayName));
         }
 
         const syllabus = await getSyllabusProgress();

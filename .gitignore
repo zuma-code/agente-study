@@ -1,3 +1,5 @@
+manuales_aeat/
+whatsapp_qr.png
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
@@ -40,3 +42,5 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 PRIVATE_CHAT_HISTORY.md
+
+

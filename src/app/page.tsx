@@ -1,13 +1,15 @@
 "use client";
 
 import React, { useState, useOptimistic, startTransition, useRef, useEffect } from 'react';
-import { queryNotebookLM, getNotebooks, getActiveManuals, generateQuiz, syncManuals, getSyllabusProgress, toggleThemeCompletion, generateSourceSummary, generateFlashcards } from './actions';
+import { queryNotebookLM, getNotebooks, getActiveManuals, generateQuiz, syncManuals, getSyllabusProgress, toggleThemeCompletion, generateSourceSummary, generateFlashcards, getPendingDocuments, indexDocument, deleteDocument, getWhatsAppStatus } from './actions';
 import ReactMarkdown from 'react-markdown';
 import { Message, Notebook, Note, Quiz, ExamResult, Flashcard } from './types';
 
 const NotebookLMStudyHub = () => {
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
   const [manuals, setManuals] = useState<any[]>([]);
+  const [pendingDocs, setPendingDocs] = useState<any[]>([]);
+  const [wsStatus, setWsStatus] = useState({ authenticated: false, qrTimestamp: 0 });
   const [syllabus, setSyllabus] = useState<any[]>([]);
   const [selectedManualNames, setSelectedManualNames] = useState<string[]>([]);
   const [selectedNotebook, setSelectedNotebook] = useState<string>("aeat-all");
@@ -18,13 +20,14 @@ const NotebookLMStudyHub = () => {
   const [isFlipped, setIsFlipped] = useState(false);
   const [isGeneratingFlashcards, setIsGeneratingFlashcards] = useState(false);
   const [noteSearch, setNoteSearch] = useState('');
-  const [activeTab, setActiveTab] = useState<'library' | 'syllabus' | 'review'>('syllabus');
+  const [activeTab, setActiveTab] = useState<'library' | 'syllabus' | 'review' | 'inbox'>('syllabus');
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [activeQuizThemeId, setActiveQuizThemeId] = useState<number | undefined>(undefined);
   const [isGeneratingQuiz, setIsGeneratingQuiz] = useState(false);
   const [userAnswers, setUserAnswers] = useState<Record<number, number>>({});
   const [showResults, setShowResults] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isIndexing, setIsIndexing] = useState<string | null>(null);
   const [timer, setTimer] = useState(0);
   const [isTimerActive, setIsTimerActive] = useState(false);
   
@@ -36,14 +39,29 @@ const NotebookLMStudyHub = () => {
   const [lastQuery, setLastQuery] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  const refreshData = async () => {
+    const [nbs, mans, pends, syll, status] = await Promise.all([
+      getNotebooks(),
+      getActiveManuals(),
+      getPendingDocuments(),
+      getSyllabusProgress(),
+      getWhatsAppStatus()
+    ]);
+    setNotebooks(nbs);
+    setManuals(mans);
+    setPendingDocs(pends);
+    setSyllabus(syll);
+    setWsStatus(status);
+  };
+
   useEffect(() => {
-    getNotebooks().then(setNotebooks);
-    getActiveManuals().then(setManuals);
-    getSyllabusProgress().then(setSyllabus);
+    refreshData();
+    const interval = setInterval(refreshData, 30000); // Auto refresh every 30s
     const savedNotes = localStorage.getItem('aeat_study_notes');
     if (savedNotes) setNotes(JSON.parse(savedNotes));
     const savedHistory = localStorage.getItem('aeat_exam_history');
     if (savedHistory) setExamHistory(JSON.parse(savedHistory));
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -212,6 +230,38 @@ const NotebookLMStudyHub = () => {
     }
   };
 
+  const handleIndexDocument = async (name: string) => {
+    setIsIndexing(name);
+    try {
+      await indexDocument(name);
+      await refreshData();
+    } catch (e) {
+      alert('Error al indexar el documento.');
+    } finally {
+      setIsIndexing(null);
+    }
+  };
+
+  const handleDeleteDocument = async (name: string) => {
+    if (!confirm(`¿Estás seguro de eliminar ${name}?`)) return;
+    try {
+      await deleteDocument(name);
+      await refreshData();
+    } catch (e) {
+      alert('Error al eliminar el documento.');
+    }
+  };
+
+  const exportNotes = () => {
+    const content = notes.map(n => `# ${n.title}\n\n${n.content}\n\n---\n\n`).join('');
+    const blob = new Blob([content], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `notas_aeat_${new Date().toISOString().split('T')[0]}.md`;
+    a.click();
+  };
+
   const [optimisticMessages, addOptimisticMessage] = useOptimistic(messages, (state, newMessage: Message) => [...state, newMessage]);
   const scrollToBottom = () => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); };
   useEffect(() => { scrollToBottom(); }, [optimisticMessages, isTyping, quiz, flashcards]);
@@ -225,7 +275,7 @@ const NotebookLMStudyHub = () => {
     startTransition(() => addOptimisticMessage(userMessage));
     try {
       const response = await queryNotebookLM(query, selectedNotebook, selectedManualNames);
-      setMessages(prev => [...prev.filter(m => !m.content.includes('❌')), userMessage, response]);
+      setMessages(prev => [...prev.filter(m => !m.content.includes('❌')), userMessage, response as Message]);
     } catch (error: any) {
       setMessages(prev => [...prev, userMessage, { role: 'assistant', content: `❌ **Error:** ${error.message}` }]);
     } finally {
@@ -252,9 +302,15 @@ const NotebookLMStudyHub = () => {
       <main className="max-w-6xl mx-auto w-full grid grid-cols-1 lg:grid-cols-12 gap-8 flex-grow overflow-hidden">
         <aside className="lg:col-span-3 flex flex-col gap-4 overflow-hidden">
           <div className="flex bg-slate-900/80 p-1 rounded-xl border border-slate-800">
-            {[{ id: 'library', label: 'Libros', icon: '📚' }, { id: 'syllabus', label: 'Temas', icon: '📑' }, { id: 'review', label: 'Repaso', icon: '🧠' }].map(tab => (
+            {[
+              { id: 'library', label: 'Libros', icon: '📚' }, 
+              { id: 'inbox', label: 'Inbox', icon: '📩' },
+              { id: 'syllabus', label: 'Temas', icon: '📑' }, 
+              { id: 'review', label: 'Repaso', icon: '🧠' }
+            ].map(tab => (
               <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`flex-grow py-2 text-[9px] font-bold rounded-lg transition-all flex flex-col items-center ${activeTab === tab.id ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}>
                 <span className="text-sm mb-1">{tab.icon}</span>{tab.label}
+                {tab.id === 'inbox' && pendingDocs.length > 0 && <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>}
               </button>
             ))}
           </div>
@@ -282,10 +338,87 @@ const NotebookLMStudyHub = () => {
                       <li key={i} className="flex items-start gap-2 group/man">
                         <input type="checkbox" checked={selectedManualNames.includes(m.displayName)} onChange={() => toggleManual(m.displayName)} className="mt-1 w-3 h-3 rounded border-slate-700 bg-slate-900 text-blue-600" />
                         <div className="flex-grow"><span className={`text-[10px] leading-tight break-all transition-colors ${selectedManualNames.includes(m.displayName) ? 'text-blue-300' : 'text-slate-500'}`}>{m.displayName}</span></div>
-                        <button onClick={() => handleSummarizeManual(m.displayName)} className="opacity-0 group-hover/man:opacity-100 text-[8px] bg-slate-800 text-blue-400 px-1.5 py-0.5 rounded border border-slate-700 hover:bg-slate-700">Guía</button>
+                        <div className="flex gap-1 opacity-0 group-hover/man:opacity-100 transition-opacity">
+                          <button onClick={() => handleSummarizeManual(m.displayName)} className="text-[8px] bg-slate-800 text-blue-400 px-1.5 py-0.5 rounded border border-slate-700 hover:bg-slate-700">Guía</button>
+                          <button onClick={() => handleDeleteDocument(m.displayName)} className="text-[8px] bg-slate-800 text-red-400 px-1.5 py-0.5 rounded border border-slate-700 hover:bg-slate-700">X</button>
+                        </div>
                       </li>
                     ))}
                   </ul>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'inbox' && (
+              <div className="space-y-4 animate-in fade-in duration-300">
+                <div className="bg-slate-900/30 border border-slate-800 p-4 rounded-2xl">
+                  <h3 className="text-[10px] font-bold text-slate-400 mb-3 uppercase tracking-widest">Estado WhatsApp</h3>
+                  <div className="flex items-center gap-3 bg-slate-950/50 p-3 rounded-xl border border-slate-800">
+                    <div className={`w-3 h-3 rounded-full ${wsStatus.authenticated ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-amber-500 animate-pulse'}`}></div>
+                    <div className="flex-grow">
+                      <div className="text-[11px] font-bold">{wsStatus.authenticated ? 'Conectado' : 'Esperando Conexión'}</div>
+                      <div className="text-[9px] text-slate-500">Puente MCP WhatsApp Activo</div>
+                    </div>
+                  </div>
+                  
+                  {!wsStatus.authenticated && (
+                    <div className="mt-4 p-4 bg-white rounded-xl flex flex-col items-center">
+                      <p className="text-[10px] text-slate-900 font-bold mb-3">Escanea para conectar</p>
+                      <img 
+                        src={`/whatsapp_qr.png?t=${wsStatus.qrTimestamp}`} 
+                        alt="WhatsApp QR" 
+                        className="w-32 h-32"
+                      />
+                      <p className="text-[8px] text-slate-500 mt-2 text-center">Si no ves el código, asegúrate de que el proceso bridge esté corriendo.</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-slate-900/30 border border-slate-800 p-4 rounded-2xl">
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Inbox WhatsApp</h3>
+                    <button onClick={refreshData} className="text-[8px] bg-slate-800 text-slate-400 px-2 py-1 rounded border border-slate-700">Refrescar</button>
+                  </div>
+                  {pendingDocs.length === 0 ? (
+                    <div className="text-center py-8">
+                      <div className="text-2xl mb-2">✨</div>
+                      <p className="text-[10px] text-slate-500">No hay documentos pendientes.</p>
+                      <p className="text-[9px] text-slate-600 mt-1 italic">Envía un PDF por WhatsApp para que aparezca aquí.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {pendingDocs.map((doc, i) => (
+                        <div key={i} className="bg-slate-900/50 border border-slate-800 p-3 rounded-xl relative group">
+                          <div className="font-bold text-[10px] text-slate-300 mb-1 break-all pr-6">{doc.name}</div>
+                          <div className="text-[9px] text-slate-500 flex justify-between">
+                            <span>{(doc.size / 1024 / 1024).toFixed(2)} MB</span>
+                            <span>{new Date(doc.createdAt).toLocaleDateString()}</span>
+                          </div>
+                          <div className="mt-3 flex gap-2">
+                            <button 
+                              onClick={() => handleIndexDocument(doc.name)}
+                              disabled={isIndexing === doc.name}
+                              className={`flex-grow py-1.5 rounded-lg text-[9px] font-bold transition-all ${isIndexing === doc.name ? 'bg-blue-600/20 text-blue-400' : 'bg-blue-600 text-white hover:bg-blue-500'}`}
+                            >
+                              {isIndexing === doc.name ? 'Indexando...' : 'Indexar a Gemini'}
+                            </button>
+                            <button 
+                              onClick={() => handleDeleteDocument(doc.name)}
+                              className="px-3 py-1.5 bg-slate-800 text-red-400 rounded-lg text-[9px] hover:bg-red-900/30 border border-slate-700"
+                            >
+                              Eliminar
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="bg-blue-600/10 border border-blue-500/20 p-4 rounded-2xl">
+                  <h4 className="text-[10px] font-bold text-blue-400 mb-2 uppercase">Tip</h4>
+                  <p className="text-[9px] text-slate-400 leading-relaxed">
+                    Los documentos que envías al grupo de WhatsApp del Agente aparecen aquí automáticamente para que puedas decidir cuáles añadir a tu base de conocimiento.
+                  </p>
                 </div>
               </div>
             )}
